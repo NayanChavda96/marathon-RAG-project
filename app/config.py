@@ -3,7 +3,7 @@
 import os
 from urllib.parse import quote, urlunsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +12,8 @@ class Settings(BaseSettings):
 
     - `extra="ignore"` lets `.env` keep legacy keys (`POSTGRES_URI`, `REDIS_URL`,
       old Groq keys, etc.) without failing startup.
-    - Required fields raise a clear validation error at import time if missing.
+    - Everything except the LLM endpoint is optional, so the project can run with
+      zero paid services (free hosted LLM like Groq, or a local Ollama model).
     """
 
     model_config = SettingsConfigDict(
@@ -21,34 +22,53 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- JINA AI (embeddings + reranker) ---
-    JINA_API_KEY: str
+    # --- LLM: any OpenAI-compatible endpoint (Groq, Gemini, OpenRouter, Ollama, ...) ---
+    # Defaults target Groq's free tier. For Ollama use:
+    #   LLM_BASE_URL=http://localhost:11434/v1  LLM_API_KEY=ollama  LLM_MODEL=llama3.1:8b
+    LLM_BASE_URL: str = "https://api.groq.com/openai/v1"
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "llama-3.3-70b-versatile"
+    # Max characters of retrieved context sent to the LLM. Lower this for free-tier
+    # token-per-minute limits or small local context windows (e.g. 8000 for Ollama).
+    MAX_CONTEXT_CHARS: int = 12000
 
-    # --- OPENAI LLM & Groq ---
-    # --- GROQ & OPENAI LLM ---
+    # Optional separate judge model for RAGAS evals (defaults to the LLM above).
+    JUDGE_LLM_BASE_URL: str | None = None
+    JUDGE_LLM_API_KEY: str | None = None
+    JUDGE_LLM_MODEL: str | None = None
+
+    # --- JINA AI (optional). Empty -> local mxbai embeddings; reranking is skipped. ---
+    JINA_API_KEY: str = ""
+    LOCAL_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    # --- LEGACY / OPTIONAL: OpenAI, Groq key alias, and the Portkey gateway ---
+    # GROQ_API_KEY is accepted as an alias for LLM_API_KEY (see validator below).
     GROQ_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     JUDGE_OPENAI_API_KEY: str | None = None
 
-    # --- PORTKEY LLM GATEWAY ---
-    PORTKEY_API_KEY: str
+    # --- PORTKEY LLM GATEWAY (only used when LLM_API_KEY is empty AND both Portkey values are set) ---
+    PORTKEY_API_KEY: str = ""
     PORTKEY_PRIMARY_SLUG: str = "marathon-api"
     PORTKEY_FALLBACK_SLUG: str = "anthropic-fallback"
     # Portkey saved config is referenced by its system-generated `pc-...` ID.
     # Required when block_inline_config is enabled on the workspace.
-    PORTKEY_PRIMARY_CONFIG_ID: str
+    PORTKEY_PRIMARY_CONFIG_ID: str = ""
 
-    # --- QDRANT VECTOR DB ---
-    QDRANT_URL: str = Field(validation_alias=AliasChoices("QDRANT_URL", "QDRANT_CLUSTER_ENDPOINT"))
+    # --- QDRANT VECTOR DB (local Docker: http://localhost:6333) ---
+    QDRANT_URL: str = Field(
+        default="http://localhost:6333",
+        validation_alias=AliasChoices("QDRANT_URL", "QDRANT_CLUSTER_ENDPOINT"),
+    )
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "enterprise_rag"
 
-    # --- NEON SERVERLESS POSTGRES (LangGraph checkpointer) ---
-    NEON_DB_URL: str
+    # --- NEON SERVERLESS POSTGRES (optional; empty -> in-memory LangGraph checkpointer) ---
+    NEON_DB_URL: str = ""
 
-    # --- UPSTASH REDIS (rate limiting) ---
-    UPSTASH_REDIS_REST_URL: str
-    UPSTASH_REDIS_REST_TOKEN: str
+    # --- UPSTASH REDIS (optional; empty -> in-memory rate limiting) ---
+    UPSTASH_REDIS_REST_URL: str = ""
+    UPSTASH_REDIS_REST_TOKEN: str = ""
 
     # --- API SAFETY ---
     API_KEY: str | None = Field(default=None, alias="RAG_API_KEY")
@@ -71,10 +91,52 @@ class Settings(BaseSettings):
             return None
         return v
 
+    @field_validator("QDRANT_URL", mode="before")
+    @classmethod
+    def _empty_qdrant_url_as_default(cls, v):
+        """A blank QDRANT_URL / QDRANT_CLUSTER_ENDPOINT in .env falls back to local Qdrant."""
+        if v is None or str(v).strip() == "":
+            return "http://localhost:6333"
+        return v
+
+    @field_validator("JUDGE_LLM_BASE_URL", "JUDGE_LLM_API_KEY", "JUDGE_LLM_MODEL", "JUDGE_OPENAI_API_KEY", mode="before")
+    @classmethod
+    def _empty_judge_as_none(cls, v):
+        return None if v == "" else v
+
+    @model_validator(mode="after")
+    def _groq_key_as_llm_key(self):
+        """Existing .env files that only have GROQ_API_KEY keep working."""
+        if not self.LLM_API_KEY and self.GROQ_API_KEY:
+            self.LLM_API_KEY = self.GROQ_API_KEY
+        return self
+
+    @property
+    def use_portkey(self) -> bool:
+        """Legacy mode: route through Portkey only when no direct LLM key is configured."""
+        return bool(not self.LLM_API_KEY and self.PORTKEY_API_KEY and self.PORTKEY_PRIMARY_CONFIG_ID)
+
+    @property
+    def has_postgres(self) -> bool:
+        return bool(self.NEON_DB_URL)
+
+    @property
+    def has_redis(self) -> bool:
+        return bool(self.UPSTASH_REDIS_REST_URL and self.UPSTASH_REDIS_REST_TOKEN)
+
     @property
     def judge_api_key(self) -> str:
         """Dedicated judge key, falling back to the main OpenAI key."""
-        return self.JUDGE_OPENAI_API_KEY or self.OPENAI_API_KEY
+        return self.JUDGE_OPENAI_API_KEY or self.OPENAI_API_KEY or ""
+
+    @property
+    def judge_config(self) -> tuple[str, str, str]:
+        """(base_url, api_key, model) for the RAGAS judge; defaults to the main LLM."""
+        return (
+            self.JUDGE_LLM_BASE_URL or self.LLM_BASE_URL,
+            self.JUDGE_LLM_API_KEY or self.LLM_API_KEY or self.JUDGE_OPENAI_API_KEY or "not-needed",
+            self.JUDGE_LLM_MODEL or self.LLM_MODEL,
+        )
 
     @property
     def postgres_uri(self) -> str:

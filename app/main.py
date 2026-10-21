@@ -64,6 +64,13 @@ def _init_rate_limiter():
     from slowapi.extension import _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
 
+    if not settings.has_redis:
+        app.state.limiter = Limiter(key_func=get_remote_address)
+        app.state.rate_limiter_storage = "memory"
+        logfire.info("🚦 Upstash Redis not configured; using in-memory rate limiting.")
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        return True
+
     try:
         storage = RedisStorage(settings.redis_url)
         # `storage.check()` returns False silently on some failures; ping the

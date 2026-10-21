@@ -3,7 +3,7 @@ import logfire
 from app.agents.state import AgentState
 from app.gateway import get_langchain_llm
 
-# Portkey-backed LLM: fallback + cache + retry — same .invoke() interface as ChatOpenAI
+# LLM bound to the configured OpenAI-compatible endpoint (Groq / Gemini / Ollama / Portkey ...)
 llm = get_langchain_llm(feature="planner")
 
 
@@ -40,7 +40,8 @@ def planner_node(state: AgentState):
         decision = llm.invoke(prompt).content.strip()
         logfire.info(f"Intent identified: {decision}")
 
-    if decision == "CONVERSATIONAL":
+    # Smaller / open models sometimes wrap the keyword in quotes or add a trailing period.
+    if decision.strip(" \t\n\"'`.").upper() == "CONVERSATIONAL":
         return {
             "current_query": "CONVERSATIONAL",
             "status": "Handling conversationally (using memory)...",

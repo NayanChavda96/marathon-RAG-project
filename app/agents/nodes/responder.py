@@ -3,14 +3,14 @@ from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponenti
 
 from app.agents.state import AgentState
 from app.config import settings
-from app.gateway import extract_cache_status, portkey_client
+from app.gateway import extract_cache_status, llm_model_name, portkey_client
 
 
 def generate_node(state: AgentState):
     """
     Synthesizes a response using both Documentation Context AND Conversation History.
-    Uses the native Portkey client (not LangChain) so we can read the
-    x-portkey-cache-status response header and surface Cache: Hit in the UI.
+    Uses the native OpenAI-compatible client (not LangChain) so that, in Portkey mode,
+    we can read the x-portkey-cache-status response header and surface Cache: Hit in the UI.
     """
     query = state["current_query"]
 
@@ -35,14 +35,14 @@ def generate_node(state: AgentState):
         """
     else:
         logfire.info("Generating technical RAG response.")
-        max_context_chars = 25000
+        max_context_chars = settings.MAX_CONTEXT_CHARS
         full_context = ""
 
         for doc in state["documents"]:
             if len(full_context) + len(doc) < max_context_chars:
                 full_context += doc + "\n\n"
             else:
-                logfire.warning("Context truncated to fit Groq TPM limits.")
+                logfire.warning(f"Context truncated to {max_context_chars} chars (MAX_CONTEXT_CHARS).")
                 break
 
         prompt = f"""
@@ -94,8 +94,8 @@ def generate_node(state: AgentState):
     before_sleep=before_sleep_log(logfire, "warning"),
 )
 def _generate_response(prompt: str):
-    """Call the LLM gateway with retry logic for transient failures."""
+    """Call the configured LLM endpoint with retry logic for transient failures."""
     return portkey_client.chat.completions.create(
-        model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
+        model=llm_model_name(),
         messages=[{"role": "user", "content": prompt}],
     )

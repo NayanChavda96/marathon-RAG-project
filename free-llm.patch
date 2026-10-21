@@ -1,0 +1,473 @@
+diff --git a/app/agents/graph.py b/app/agents/graph.py
+index 4a1aba8..29c483e 100644
+--- a/app/agents/graph.py
++++ b/app/agents/graph.py
+@@ -18,7 +18,14 @@ def create_checkpointer() -> BaseCheckpointSaver:
+     Note: we run setup() through a single autocommit connection because
+     LangGraph's migrations include CREATE INDEX CONCURRENTLY, which Neon
+     rejects when run inside a transaction (the default ConnectionPool mode).
++
++    When NEON_DB_URL is not set (free/local mode) an in-memory MemorySaver is used
++    directly: conversation memory then lasts only until the server restarts.
+     """
++    if not settings.has_postgres:
++        logfire.info("🗄️ NEON_DB_URL not set — using in-memory checkpointer (memory resets on restart).")
++        return MemorySaver()
++
+     try:
+         from langgraph.checkpoint.postgres import PostgresSaver
+         from psycopg_pool import ConnectionPool
+diff --git a/app/agents/nodes/planner.py b/app/agents/nodes/planner.py
+index 461aec3..049a333 100644
+--- a/app/agents/nodes/planner.py
++++ b/app/agents/nodes/planner.py
+@@ -3,7 +3,7 @@ import logfire
+ from app.agents.state import AgentState
+ from app.gateway import get_langchain_llm
+ 
+-# Portkey-backed LLM: fallback + cache + retry — same .invoke() interface as ChatOpenAI
++# LLM bound to the configured OpenAI-compatible endpoint (Groq / Gemini / Ollama / Portkey ...)
+ llm = get_langchain_llm(feature="planner")
+ 
+ 
+@@ -40,7 +40,8 @@ def planner_node(state: AgentState):
+         decision = llm.invoke(prompt).content.strip()
+         logfire.info(f"Intent identified: {decision}")
+ 
+-    if decision == "CONVERSATIONAL":
++    # Smaller / open models sometimes wrap the keyword in quotes or add a trailing period.
++    if decision.strip(" \t\n\"'`.").upper() == "CONVERSATIONAL":
+         return {
+             "current_query": "CONVERSATIONAL",
+             "status": "Handling conversationally (using memory)...",
+diff --git a/app/agents/nodes/responder.py b/app/agents/nodes/responder.py
+index c44670a..198d087 100644
+--- a/app/agents/nodes/responder.py
++++ b/app/agents/nodes/responder.py
+@@ -3,14 +3,14 @@ from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponenti
+ 
+ from app.agents.state import AgentState
+ from app.config import settings
+-from app.gateway import extract_cache_status, portkey_client
++from app.gateway import extract_cache_status, llm_model_name, portkey_client
+ 
+ 
+ def generate_node(state: AgentState):
+     """
+     Synthesizes a response using both Documentation Context AND Conversation History.
+-    Uses the native Portkey client (not LangChain) so we can read the
+-    x-portkey-cache-status response header and surface Cache: Hit in the UI.
++    Uses the native OpenAI-compatible client (not LangChain) so that, in Portkey mode,
++    we can read the x-portkey-cache-status response header and surface Cache: Hit in the UI.
+     """
+     query = state["current_query"]
+ 
+@@ -35,14 +35,14 @@ def generate_node(state: AgentState):
+         """
+     else:
+         logfire.info("Generating technical RAG response.")
+-        max_context_chars = 25000
++        max_context_chars = settings.MAX_CONTEXT_CHARS
+         full_context = ""
+ 
+         for doc in state["documents"]:
+             if len(full_context) + len(doc) < max_context_chars:
+                 full_context += doc + "\n\n"
+             else:
+-                logfire.warning("Context truncated to fit Groq TPM limits.")
++                logfire.warning(f"Context truncated to {max_context_chars} chars (MAX_CONTEXT_CHARS).")
+                 break
+ 
+         prompt = f"""
+@@ -94,8 +94,8 @@ def generate_node(state: AgentState):
+     before_sleep=before_sleep_log(logfire, "warning"),
+ )
+ def _generate_response(prompt: str):
+-    """Call the LLM gateway with retry logic for transient failures."""
++    """Call the configured LLM endpoint with retry logic for transient failures."""
+     return portkey_client.chat.completions.create(
+-        model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
++        model=llm_model_name(),
+         messages=[{"role": "user", "content": prompt}],
+     )
+diff --git a/app/config.py b/app/config.py
+index 6f26f0f..eee75a4 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -12,7 +12,8 @@ class Settings(BaseSettings):
+ 
+     - `extra="ignore"` lets `.env` keep legacy keys (`POSTGRES_URI`, `REDIS_URL`,
+       old Groq keys, etc.) without failing startup.
+-    - Required fields raise a clear validation error at import time if missing.
++    - Everything except the LLM endpoint is optional, so the project can run with
++      zero paid services (free hosted LLM or a local Ollama model).
+     """
+ 
+     model_config = SettingsConfigDict(
+@@ -21,39 +22,58 @@ class Settings(BaseSettings):
+         extra="ignore",
+     )
+ 
+-    # --- JINA AI (embeddings + reranker) ---
+-    JINA_API_KEY: str
+-
+-    # --- OPENAI LLM ---
+-    OPENAI_API_KEY: str
++    # --- LLM: any OpenAI-compatible endpoint (Groq, Gemini, OpenRouter, Ollama, ...) ---
++    # Defaults target Groq's free tier. For Ollama use:
++    #   LLM_BASE_URL=http://localhost:11434/v1  LLM_API_KEY=ollama  LLM_MODEL=llama3.1:8b
++    LLM_BASE_URL: str = "https://api.groq.com/openai/v1"
++    LLM_API_KEY: str = ""
++    LLM_MODEL: str = "llama-3.3-70b-versatile"
++    # Max characters of retrieved context sent to the LLM. Lower this for free-tier
++    # token-per-minute limits or small local context windows (e.g. 8000 for Ollama).
++    MAX_CONTEXT_CHARS: int = 12000
++
++    # Optional separate judge model for RAGAS evals (defaults to the LLM above).
++    JUDGE_LLM_BASE_URL: str | None = None
++    JUDGE_LLM_API_KEY: str | None = None
++    JUDGE_LLM_MODEL: str | None = None
++
++    # --- JINA AI (optional). Empty -> local mxbai embeddings + local cross-encoder reranker. ---
++    JINA_API_KEY: str = ""
++    # Local reranker used when JINA_API_KEY is empty. Set to "" to disable reranking.
++    LOCAL_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
++
++    # --- LEGACY / OPTIONAL: OpenAI + Portkey gateway ---
++    # Portkey is only used when LLM_API_KEY is empty AND both Portkey values below are set.
++    OPENAI_API_KEY: str = ""
+     JUDGE_OPENAI_API_KEY: str | None = None
+-
+-    # --- PORTKEY LLM GATEWAY ---
+-    PORTKEY_API_KEY: str
++    PORTKEY_API_KEY: str = ""
+     PORTKEY_PRIMARY_SLUG: str = "marathon-api"
+     PORTKEY_FALLBACK_SLUG: str = "anthropic-fallback"
+     # Portkey saved config is referenced by its system-generated `pc-...` ID.
+     # Required when block_inline_config is enabled on the workspace.
+-    PORTKEY_PRIMARY_CONFIG_ID: str
++    PORTKEY_PRIMARY_CONFIG_ID: str = ""
+ 
+-    # --- QDRANT VECTOR DB ---
+-    QDRANT_URL: str = Field(validation_alias=AliasChoices("QDRANT_URL", "QDRANT_CLUSTER_ENDPOINT"))
++    # --- QDRANT VECTOR DB (local Docker: http://localhost:6333) ---
++    QDRANT_URL: str = Field(
++        default="http://localhost:6333",
++        validation_alias=AliasChoices("QDRANT_URL", "QDRANT_CLUSTER_ENDPOINT"),
++    )
+     QDRANT_API_KEY: str | None = None
+     QDRANT_COLLECTION: str = "enterprise_rag"
+ 
+-    # --- NEON SERVERLESS POSTGRES (LangGraph checkpointer) ---
+-    NEON_DB_URL: str
++    # --- NEON SERVERLESS POSTGRES (optional; empty -> in-memory LangGraph checkpointer) ---
++    NEON_DB_URL: str = ""
+ 
+-    # --- UPSTASH REDIS (rate limiting) ---
+-    UPSTASH_REDIS_REST_URL: str
+-    UPSTASH_REDIS_REST_TOKEN: str
++    # --- UPSTASH REDIS (optional; empty -> in-memory rate limiting) ---
++    UPSTASH_REDIS_REST_URL: str = ""
++    UPSTASH_REDIS_REST_TOKEN: str = ""
+ 
+     # --- API SAFETY ---
+     API_KEY: str | None = Field(default=None, alias="RAG_API_KEY")
+     RATE_LIMIT_PER_MINUTE: int = 20
+     STRICT_STARTUP: bool = False
+ 
+-    # --- OBSERVABILITY ---
++    # --- OBSERVABILITY (all optional) ---
+     LOGFIRE_TOKEN: str | None = None
+     LOGFIRE_BASE_URL: str | None = None  # e.g. https://logfire-eu.pydantic.dev for EU tokens
+     LANGSMITH_TRACING: str = "true"
+@@ -69,10 +89,40 @@ class Settings(BaseSettings):
+             return None
+         return v
+ 
++    @field_validator("QDRANT_URL", mode="before")
++    @classmethod
++    def _empty_qdrant_url_as_default(cls, v):
++        """A blank QDRANT_URL / QDRANT_CLUSTER_ENDPOINT in .env falls back to local Qdrant."""
++        if v is None or str(v).strip() == "":
++            return "http://localhost:6333"
++        return v
++
++    @field_validator("JUDGE_LLM_BASE_URL", "JUDGE_LLM_API_KEY", "JUDGE_LLM_MODEL", "JUDGE_OPENAI_API_KEY", mode="before")
++    @classmethod
++    def _empty_judge_as_none(cls, v):
++        return None if v == "" else v
++
++    @property
++    def use_portkey(self) -> bool:
++        """Legacy mode: route through Portkey only when no direct LLM key is configured."""
++        return bool(not self.LLM_API_KEY and self.PORTKEY_API_KEY and self.PORTKEY_PRIMARY_CONFIG_ID)
++
++    @property
++    def has_postgres(self) -> bool:
++        return bool(self.NEON_DB_URL)
++
++    @property
++    def has_redis(self) -> bool:
++        return bool(self.UPSTASH_REDIS_REST_URL and self.UPSTASH_REDIS_REST_TOKEN)
++
+     @property
+-    def judge_api_key(self) -> str:
+-        """Dedicated judge key, falling back to the main OpenAI key."""
+-        return self.JUDGE_OPENAI_API_KEY or self.OPENAI_API_KEY
++    def judge_config(self) -> tuple[str, str, str]:
++        """(base_url, api_key, model) for the RAGAS judge; defaults to the main LLM."""
++        return (
++            self.JUDGE_LLM_BASE_URL or self.LLM_BASE_URL,
++            self.JUDGE_LLM_API_KEY or self.LLM_API_KEY or self.JUDGE_OPENAI_API_KEY or "not-needed",
++            self.JUDGE_LLM_MODEL or self.LLM_MODEL,
++        )
+ 
+     @property
+     def postgres_uri(self) -> str:
+diff --git a/app/gateway/__init__.py b/app/gateway/__init__.py
+index 7789a74..aa22ce2 100644
+--- a/app/gateway/__init__.py
++++ b/app/gateway/__init__.py
+@@ -2,5 +2,6 @@ from app.gateway.client import (
+     extract_cache_status,
+     get_async_openai_client,
+     get_langchain_llm,
++    llm_model_name,
+     portkey_client,
+ )
+diff --git a/app/gateway/client.py b/app/gateway/client.py
+index ffc3d88..3ffef60 100644
+--- a/app/gateway/client.py
++++ b/app/gateway/client.py
+@@ -1,25 +1,22 @@
++"""LLM access layer.
++
++Default: talk directly to any OpenAI-compatible endpoint (Groq, Gemini, OpenRouter,
++Ollama, LM Studio, ...) configured via LLM_BASE_URL / LLM_API_KEY / LLM_MODEL.
++
++Legacy: when LLM_API_KEY is empty and PORTKEY_API_KEY + PORTKEY_PRIMARY_CONFIG_ID are
++set, requests are routed through the Portkey gateway exactly as before.
++"""
++
+ from langchain_openai import ChatOpenAI
+ from openai import AsyncOpenAI, OpenAI
+-from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
+ 
+ from app.config import settings
+ 
+-# Portkey routing strategy:
+-#   - Primary/fallback logic lives in a Portkey saved config (required when
+-#     block_inline_config is enabled on the workspace).
+-#   - We reference that config via the x-portkey-config-id header.
+-#   - The inline config dict approach is disabled for this account, so all
+-#     retry/fallback/cache behavior must be configured inside the Portkey UI.
+-
+ 
+-def _make_headers(feature: str = "rag") -> dict:
++def _portkey_headers(feature: str = "rag") -> dict:
+     """Build Portkey headers that reference the primary saved config by ID."""
+-    if not settings.PORTKEY_PRIMARY_CONFIG_ID:
+-        raise ValueError(
+-            "PORTKEY_PRIMARY_CONFIG_ID is not set in .env. "
+-            "Get the real pc-... ID from the Portkey dashboard or "
+-            "run: PYTHONPATH=. python scripts/list_portkey_configs.py"
+-        )
++    from portkey_ai import createHeaders
++
+     return createHeaders(
+         api_key=settings.PORTKEY_API_KEY,
+         config_id=settings.PORTKEY_PRIMARY_CONFIG_ID,
+@@ -31,50 +28,58 @@ def _make_headers(feature: str = "rag") -> dict:
+     )
+ 
+ 
+-# OpenAI-compatible client routed through Portkey.
+-# We use the OpenAI SDK directly because the native Portkey SDK does not
+-# surface a first-class config_id constructor parameter; the header-based
+-# approach works reliably with block_inline_config enabled.
+-portkey_client = OpenAI(
+-    api_key=settings.PORTKEY_API_KEY,
+-    base_url=PORTKEY_GATEWAY_URL,
+-    default_headers=_make_headers(),
+-)
++def _endpoint(feature: str = "rag") -> tuple[str, str, dict | None]:
++    """Return (base_url, api_key, default_headers) for the active LLM backend."""
++    if settings.use_portkey:
++        from portkey_ai import PORTKEY_GATEWAY_URL
+ 
++        return PORTKEY_GATEWAY_URL, settings.PORTKEY_API_KEY, _portkey_headers(feature)
++    # Local servers (Ollama, LM Studio) ignore the key, but the OpenAI SDK needs a non-empty one.
++    return settings.LLM_BASE_URL, settings.LLM_API_KEY or "not-needed", None
+ 
+-def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
+-    """
+-    Returns a Portkey-backed ChatOpenAI - a drop-in for LangChain nodes.
+ 
+-    Why ChatOpenAI:
+-      Portkey is a proxy. It exposes an OpenAI-compatible endpoint at PORTKEY_GATEWAY_URL.
+-      ChatOpenAI supports base_url (points at Portkey) and default_headers (passes Portkey
+-      auth + saved-config reference). The @slug/model-name format is Portkey-specific - the
+-      upstream provider's own client does not understand it. Portkey is just in the middle.
+-    """
++def llm_model_name() -> str:
++    """Model identifier to send in requests (Portkey needs the `@slug/model` form)."""
++    if settings.use_portkey:
++        return f"@{settings.PORTKEY_PRIMARY_SLUG}/{settings.LLM_MODEL}"
++    return settings.LLM_MODEL
++
++
++# Synchronous OpenAI-compatible client. The name is kept for backwards compatibility
++# (responder + health check + tests import it) even though Portkey is now optional.
++_base_url, _api_key, _headers = _endpoint()
++portkey_client = OpenAI(api_key=_api_key, base_url=_base_url, default_headers=_headers)
++
++
++def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
++    """Returns a ChatOpenAI bound to the configured endpoint - a drop-in for LangChain nodes."""
++    base_url, api_key, headers = _endpoint(feature)
++    kwargs: dict = {}
++    if not settings.use_portkey:
++        # Deterministic output for planner/guardrail classification. Skipped in legacy
++        # Portkey mode because reasoning models (gpt-5-mini) reject a custom temperature.
++        kwargs["temperature"] = 0
+     return ChatOpenAI(
+-        api_key=settings.PORTKEY_API_KEY,
+-        base_url=PORTKEY_GATEWAY_URL,
+-        model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
+-        default_headers=_make_headers(feature),
++        api_key=api_key,
++        base_url=base_url,
++        model=llm_model_name(),
++        default_headers=headers,
++        **kwargs,
+     )
+ 
+ 
+ def get_async_openai_client(feature: str = "rag") -> AsyncOpenAI:
+     """
+-    Returns an async OpenAI client that routes through the Portkey gateway.
++    Returns an async OpenAI-compatible client for the configured endpoint.
+     Use this for non-LangChain async LLM calls (e.g. async FastAPI endpoints).
+     """
+-    return AsyncOpenAI(
+-        api_key=settings.PORTKEY_API_KEY,
+-        base_url=PORTKEY_GATEWAY_URL,
+-        default_headers=_make_headers(feature),
+-    )
++    base_url, api_key, headers = _endpoint(feature)
++    return AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+ 
+ 
+ def extract_cache_status(response) -> str:
+     """
+-    Pull x-portkey-cache-status from the response.
++    Pull x-portkey-cache-status from the response (Portkey mode only).
+ 
+     The OpenAI SDK does not expose raw headers on parsed responses, so cache
+     hit/miss tracking is best-effort. We inspect common attribute paths and
+diff --git a/app/guardrails/rails.py b/app/guardrails/rails.py
+index a5d9d50..ee334e9 100644
+--- a/app/guardrails/rails.py
++++ b/app/guardrails/rails.py
+@@ -1,8 +1,7 @@
+ import logfire
+-from langchain_openai import ChatOpenAI
+ from nemoguardrails import LLMRails, RailsConfig
+ 
+-from app.config import settings
++from app.gateway import get_langchain_llm, llm_model_name
+ from app.guardrails.colang_rules import COLANG_CONTENT, RAIL_INDICATORS, YAML_CONTENT
+ 
+ _rails: LLMRails | None = None
+@@ -11,16 +10,16 @@ _rails: LLMRails | None = None
+ def initialize_rails() -> None:
+     """
+     Build the NeMo LLMRails singleton at app startup.
+-    Uses OpenAI gpt-5-mini for fast intent classification at the gate.
++    Uses the configured LLM (LLM_BASE_URL / LLM_MODEL) for intent classification at the gate.
+     """
+     global _rails
+ 
+-    guard_llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-5-mini")
++    guard_llm = get_langchain_llm(feature="guardrails")
+ 
+     config = RailsConfig.from_content(colang_content=COLANG_CONTENT, yaml_content=YAML_CONTENT)
+ 
+     _rails = LLMRails(config, llm=guard_llm)
+-    logfire.info("🛡️ NeMo Guardrails initialised (gpt-5-mini).")
++    logfire.info(f"🛡️ NeMo Guardrails initialised ({llm_model_name()}).")
+ 
+ 
+ def guard(message: str) -> tuple[bool, str | None]:
+diff --git a/app/main.py b/app/main.py
+index 0cd5478..03202f0 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -64,6 +64,13 @@ def _init_rate_limiter():
+     from slowapi.extension import _rate_limit_exceeded_handler
+     from slowapi.util import get_remote_address
+ 
++    if not settings.has_redis:
++        app.state.limiter = Limiter(key_func=get_remote_address)
++        app.state.rate_limiter_storage = "memory"
++        logfire.info("🚦 Upstash Redis not configured; using in-memory rate limiting.")
++        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
++        return True
++
+     try:
+         storage = RedisStorage(settings.redis_url)
+         # `storage.check()` returns False silently on some failures; ping the
+diff --git a/app/services/health/connection_checker.py b/app/services/health/connection_checker.py
+index 9ed65f7..4f295f0 100644
+--- a/app/services/health/connection_checker.py
++++ b/app/services/health/connection_checker.py
+@@ -17,7 +17,7 @@ from qdrant_client import QdrantClient
+ from redis import Redis
+ 
+ from app.config import settings
+-from app.gateway.client import portkey_client
++from app.gateway.client import llm_model_name, portkey_client
+ 
+ 
+ class ConnectionResult:
+@@ -103,13 +103,13 @@ def _check_portkey_gateway() -> ConnectionResult:
+     """Verify Portkey LLM gateway responds to a minimal completion."""
+     try:
+         resp = portkey_client.chat.completions.create(
+-            model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
++            model=llm_model_name(),
+             messages=[{"role": "user", "content": "Say hello in one word."}],
+             max_completion_tokens=100,
+             timeout=10,
+         )
+         if resp.choices and resp.choices[0].message.content is not None:
+-            return ConnectionResult("llm_gateway", True, "Portkey gateway reachable")
++            return ConnectionResult("llm_gateway", True, f"LLM endpoint reachable ({llm_model_name()})")
+         raise RuntimeError("empty response")
+     except Exception as e:
+         logfire.warning(f"LLM gateway health check failed: {e}")
+diff --git a/evals/metrics.py b/evals/metrics.py
+index a908d1e..9438cb5 100644
+--- a/evals/metrics.py
++++ b/evals/metrics.py
+@@ -33,9 +33,17 @@ CONTEXT_LIMIT = 2  # number of context chunks passed to RAGAS per sample
+ 
+ 
+ def _build_judge():
+-    api_key = os.getenv("JUDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+-    client = AsyncOpenAI(api_key=api_key, base_url=OPENAI_BASE_URL)
+-    llm = llm_factory(JUDGE_MODEL, provider="openai", client=client)
++    from app.config import settings
++
++    if settings.LLM_API_KEY or settings.JUDGE_LLM_API_KEY:
++        # Free / local path: judge with the same OpenAI-compatible endpoint as the app (Groq, Gemini, Ollama...)
++        base_url, api_key, model = settings.judge_config
++    else:
++        # Legacy path: OpenAI judge
++        api_key = os.getenv("JUDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
++        base_url, model = OPENAI_BASE_URL, JUDGE_MODEL
++    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
++    llm = llm_factory(model, provider="openai", client=client)
+     embeddings = HuggingFaceEmbeddings(
+         model="sentence-transformers/all-MiniLM-L6-v2",
+         use_api=False,

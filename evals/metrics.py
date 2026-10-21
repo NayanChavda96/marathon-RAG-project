@@ -33,9 +33,17 @@ CONTEXT_LIMIT = 2  # number of context chunks passed to RAGAS per sample
 
 
 def _build_judge():
-    api_key = os.getenv("JUDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    client = AsyncOpenAI(api_key=api_key, base_url=OPENAI_BASE_URL)
-    llm = llm_factory(JUDGE_MODEL, provider="openai", client=client)
+    from app.config import settings
+
+    if settings.LLM_API_KEY or settings.JUDGE_LLM_API_KEY:
+        # Free / local path: judge with the same OpenAI-compatible endpoint as the app (Groq, Gemini, Ollama...)
+        base_url, api_key, model = settings.judge_config
+    else:
+        # Legacy path: OpenAI judge
+        api_key = os.getenv("JUDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url, model = OPENAI_BASE_URL, JUDGE_MODEL
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    llm = llm_factory(model, provider="openai", client=client)
     embeddings = HuggingFaceEmbeddings(
         model="sentence-transformers/all-MiniLM-L6-v2",
         use_api=False,

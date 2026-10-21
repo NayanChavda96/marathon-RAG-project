@@ -17,7 +17,7 @@ from qdrant_client import QdrantClient
 from redis import Redis
 
 from app.config import settings
-from app.gateway.client import portkey_client
+from app.gateway.client import llm_model_name, portkey_client
 
 
 class ConnectionResult:
@@ -37,6 +37,8 @@ class ConnectionResult:
 
 def _check_neon_postgres() -> ConnectionResult:
     """Verify Neon Postgres is reachable and accepts queries."""
+    if not settings.has_postgres:
+        return ConnectionResult("postgres", True, "NEON_DB_URL not set — using in-memory checkpointer")
     pool = None
     conn = None
     try:
@@ -71,6 +73,8 @@ def _check_neon_postgres() -> ConnectionResult:
 
 def _check_upstash_redis() -> ConnectionResult:
     """Verify Upstash Redis is reachable."""
+    if not settings.has_redis:
+        return ConnectionResult("redis", True, "Upstash not set — using in-memory rate limiting")
     try:
         r = Redis.from_url(
             settings.redis_url,
@@ -100,23 +104,16 @@ def _check_qdrant() -> ConnectionResult:
 
 
 def _check_portkey_gateway() -> ConnectionResult:
-    """Verify Portkey LLM gateway responds to a minimal completion."""
+    """Verify the configured LLM endpoint (Groq / Ollama / Portkey ...) answers a minimal completion."""
     try:
-        # resp = portkey_client.chat.completions.create(
-        #     model=f"@{settings.PORTKEY_PRIMARY_SLUG}/gpt-5-mini",
-        #     messages=[{"role": "user", "content": "Say hello in one word."}],
-        #     max_completion_tokens=100,
-        #     timeout=10,
-        # )
-        # NEW:
         resp = portkey_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # <--- Groq model
+            model=llm_model_name(),
             messages=[{"role": "user", "content": "Say hello in one word."}],
             max_completion_tokens=100,
             timeout=10,
         )
         if resp.choices and resp.choices[0].message.content is not None:
-            return ConnectionResult("llm_gateway", True, "Portkey gateway reachable")
+            return ConnectionResult("llm_gateway", True, f"LLM endpoint reachable ({llm_model_name()})")
         raise RuntimeError("empty response")
     except Exception as e:
         logfire.warning(f"LLM gateway health check failed: {e}")

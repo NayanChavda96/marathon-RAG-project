@@ -1,0 +1,190 @@
+.
+./ui
+./ui/st_cloud_ui.py
+./ui/app.py
+./deployment_plan.md
+./evals
+./evals/metrics.py
+./evals/guardrails_eval.py
+./evals/golden_dataset.json
+./evals/__init__.py
+./evals/data_parser.py
+./evals/run_evals.py
+./evals/pipeline.py
+./evals/app.py
+./evals/og_golden_dataset.json
+./ARCHITECTURE.md
+./app
+./app/logging.py
+./app/ingestion
+./app/ingestion/processor.py
+./app/ingestion/chunking
+./app/ingestion/chunking/splitter.py
+./app/ingestion/chunking/__init__.py
+./app/ingestion/loaders
+./app/ingestion/loaders/office.py
+./app/ingestion/loaders/html.py
+./app/ingestion/loaders/__init__.py
+./app/ingestion/loaders/pdf.py
+./app/ingestion/loaders/text.py
+./app/config.py
+./app/guardrails
+./app/guardrails/__init__.py
+./app/guardrails/rails.py
+./app/guardrails/colang_rules.py
+./app/health.py
+./app/__init__.py
+./app/agents
+./app/agents/nodes
+./app/agents/nodes/planner.py
+./app/agents/nodes/retriever.py
+./app/agents/nodes/responder.py
+./app/agents/graph.py
+./app/agents/state.py
+./app/__pycache__
+./app/__pycache__/config.cpython-312.pyc
+./app/__pycache__/__init__.cpython-312.pyc
+./app/main.py
+./app/services
+./app/services/health
+./app/services/health/__init__.py
+./app/services/health/__pycache__
+./app/services/health/__pycache__/connection_checker.cpython-312.pyc
+./app/services/health/__pycache__/__init__.cpython-312.pyc
+./app/services/health/connection_checker.py
+./app/services/__init__.py
+./app/services/__pycache__
+./app/services/__pycache__/__init__.cpython-312.pyc
+./app/services/retrieval
+./app/services/retrieval/qdrant_service.py
+./app/services/retrieval/embedding.py
+./app/services/retrieval/ranking_service.py
+./app/gateway
+./app/gateway/client.py
+./app/gateway/__init__.py
+./app/gateway/__pycache__
+./app/gateway/__pycache__/client.cpython-312.pyc
+./app/gateway/__pycache__/__init__.cpython-312.pyc
+./requirements.txt
+./uv.lock
+./Dockerfile
+./requirements-prod.txt
+./pyproject.toml
+./local_testing.md
+./tests
+./tests/test_retry.py
+./tests/test_metrics.py
+./tests/test_auth.py
+./tests/test_connection_checker.py
+./tests/__init__.py
+./tests/test_rate_limit.py
+./tests/test_checkpointer.py
+./tests/test_health.py
+./tests/test_async_query.py
+./tests/test_evals.py
+./TESTING.md
+./processed_data
+./processed_data/noisy
+./processed_data/noisy/5-Level Paging and 5-Level EPT - Intel - Revision 1.1 (May, 2017).pdf.json
+./processed_data/noisy/README.txt.json
+./processed_data/noisy/37 Million Compilations - Investigating Novice Programming Mistakes in Large-Scale Student Data (fp1187-altadmri).pdf.json
+./processed_data/noisy/5-Level Paging and 5-Level EPT - Intel - Revision 1.0 (December, 2016).pdf.json
+./processed_data/noisy/100G Networking Technology Overview - Slides - Toronto (August 2016).pdf.json
+./processed_data/true
+./processed_data/true/job_management.html.json
+./processed_data/true/monitor_job.docx.json
+./processed_data/true/architecture.pptx.json
+./processed_data/true/pods_autoscale.html.json
+./processed_data/true/parallel_work_queue.txt.json
+./processed_data/true/cronjobs.docx.json
+./project_structure.txt
+./README.md
+./scripts
+./scripts/locustfile.py
+./scripts/aws_deploy_env.sh
+./scripts/list_portkey_configs.py
+./scripts/destroy_aws_deployment.sh
+./scripts/create_aws_secrets.py
+./scripts/aws_secret_arns.sh
+./scripts/aws_deploy_state.sh
+./scripts/render_task_defs.py
+./docker-compose.yml
+./aws.md
+./DATA
+./DATA/true_data
+./DATA/true_data/parallel_work_queue.txt
+./DATA/true_data/job_management.html
+./DATA/true_data/cronjobs.docx
+./DATA/true_data/monitor_job.docx
+./DATA/true_data/architecture.pptx
+./DATA/true_data/pods_autoscale.html
+./DATA/noisy_data
+./DATA/noisy_data/A Novel Hybrid Quicksort Algorithm Vectorized using AVX-512 on Intel Skylake (1704.08579).pdf
+./DATA/noisy_data/A Pattern Language - Alexander.txt
+./DATA/noisy_data/A Tool for the Symbolic Execution of Linux Binaries - PySymemu (Slides).pdf
+./DATA/noisy_data/A Catalogue of Optimizing Transformations (1971-allen-catalog).pdf
+./DATA/noisy_data/A Framework for Building Extensible C++ Class Libraries - 1993.pdf
+./DATA/noisy_data/A Brief Introduction to Neural Networks (neuronalenetze-en-zeta2-2col-dkrieselcom).pdf
+./DATA/noisy_data/A Journey in Creating an Operating System Kernel - The 539Kernel Book (Nov 2022).txt
+./DATA/noisy_data/A Case Study in Optimizing HTM-Enabled Dynamic Data Structures - Patricia Tries (2015).pdf
+./DATA/noisy_data/A GPU-friendly Skiplist Algorith - 2014 (GPUSkiplist).pdf
+./DATA/noisy_data/A NUMA API for Linux - Novell (2005).txt
+./DATA/noisy_data/A Mathematical Theory of Communication (1948).pdf
+./DATA/noisy_data/A Lock-Free Wait-Free Hash Table - Slides (070221_LockFreeHash).pdf
+./DATA/noisy_data/A Proposal for Hardware Assisted Arithmetic Overflow Detection - 2010 - Slides (Mihocka-Troeger-CGO-WISH-2010_final).docx
+./DATA/noisy_data/5-Level Paging and 5-Level EPT - Intel - Revision 1.1 (May, 2017).pdf
+./DATA/noisy_data/A New Basis for Shifters in General-Purpose Processors for Existing and Advanced Bit Manipulations - 2009 (IEEE_TC09_NewBasisForShifters).pdf
+./DATA/noisy_data/A Relational Model of Data for Large Shared Data Banks - E.F. Codd (1970).pdf
+./DATA/noisy_data/A Little Journey Inside Windows Memory.pdf
+./DATA/noisy_data/A Pattern Language - Alexander.pdf
+./DATA/noisy_data/A Mathematician's Lament - Paul Lockhart.pdf
+./DATA/noisy_data/A History of Modern 64-bit Computing - Feb 2007 (CSEP590A).pdf
+./DATA/noisy_data/A Practical Guide to Support Vector Classification.pdf
+./DATA/noisy_data/37 Million Compilations - Investigating Novice Programming Mistakes in Large-Scale Student Data (fp1187-altadmri).pdf
+./DATA/noisy_data/A NUMA API for Linux - Novell (2005).pdf
+./DATA/noisy_data/A Proposal for Hardware Assisted Arithmetic Overflow Detection for Array and Bitfield Operations (LazyOverflowDetect_Final).pdf
+./DATA/noisy_data/A Forensic Analysis of CSG 11 Encounter with an Anomalous Aerial Vehicle.pdf
+./DATA/noisy_data/A Primer on Memory Consistency and Cache Coherence - 2nd Edition.pdf
+./DATA/noisy_data/A Block-sorting Lossless Data Compression Algorithm - May 10th, 1994 (SRC-RR-124).pdf
+./DATA/noisy_data/A Journey in Creating an Operating System Kernel - The 539Kernel Book (Nov 2022).pdf
+./DATA/noisy_data/A Nanopass Framework for Compiler Education.pdf
+./DATA/noisy_data/A Primer on Memory Consistency and Cache Coherence (10.1.1.225.9278).pdf
+./DATA/noisy_data/A PlusCal User's Manual - C-Syntax Version 1.8 (31 Aug 2018).pdf
+./DATA/noisy_data/A Practical Minimal Perfect Hashing Method (2005).pdf
+./DATA/noisy_data/A Brief Introduction to the Standard Annotation Language (SAL) - 2006.pdf
+./DATA/noisy_data/A Malloc Tutorial (Feb 16, 2009).pdf
+./DATA/noisy_data/2018 CppCon Unwinding the Stack - Exploring how C++ Exceptions work on Windows - James McNellis.pdf
+./DATA/noisy_data/A New Algorithm for Data Compression (1994).html
+./DATA/noisy_data/A Theoretical Framework for Back-Propagation (2001).pdf
+./DATA/noisy_data/A NUMA API for Linux - Novell (2005).html
+./DATA/noisy_data/A Parallel Page Cache- IOPS and Caching for Multicore Systems.pdf
+./DATA/noisy_data/A Proposal for Hardware Assisted Arithmetic Overflow Detection - 2010 - Slides (Mihocka-Troeger-CGO-WISH-2010_final).pdf
+./DATA/noisy_data/A Mathematical Theory of Communication (1948).pptx
+./DATA/noisy_data/A Quick Guide To LaTeX.pdf
+./DATA/noisy_data/A Comparison of Programming Languages in Economics (16-Jun-2014).pdf
+./DATA/noisy_data/README.txt
+./DATA/noisy_data/5-Level Paging and 5-Level EPT - Intel - Revision 1.0 (December, 2016).pdf
+./DATA/noisy_data/A Method for the Construction of Minimum-Redundancy Codes - Huffman (1952).pdf
+./DATA/noisy_data/A Probabilistic Theory of Deep Learning (1504.00641v1).pdf
+./DATA/noisy_data/A Locality-Sensitive Hash for Real Vectors (10.1.1.215.7690).pdf
+./DATA/noisy_data/A Novel Hybrid Quicksort Algorithm Vectorized using AVX-512 on Intel Skylake - 2017 (Paper_44-A_Novel_Hybrid_Quicksort_Algorithm_Vectorized).pdf
+./DATA/noisy_data/A Neural Probabilistic Language Model (bengio03a).pdf
+./DATA/noisy_data/A Comparison of Software and Hardware Techniques for x86 Virtualization - Oct 2015 (asplos235_adams).pdf
+./DATA/noisy_data/A Look at Intel's Dataplane Development Kit (2014).pdf
+./DATA/noisy_data/100G Networking Technology Overview - Slides - Toronto (August 2016).pdf
+./DATA/noisy_data/A Probabilistic Theory of Deep Learning.pptx
+./DATA/noisy_data/A Trip Through The Graphics Pipeline - All (2011).docx
+./DATA/noisy_data/A New Algorithm for Data Compression (1994).pdf
+./DATA/noisy_data/A Brief Tutorial on Database Queries, Data Mining, and OLAP (hamel-197-manuscript-final).pdf
+./DATA/noisy_data/A Journey in Creating an Operating System Kernel - The 539Kernel Book (Nov 2022).html
+./enterprise_rag.egg-info
+./enterprise_rag.egg-info/PKG-INFO
+./enterprise_rag.egg-info/SOURCES.txt
+./enterprise_rag.egg-info/requires.txt
+./enterprise_rag.egg-info/top_level.txt
+./enterprise_rag.egg-info/dependency_links.txt
+./notebooks
+./notebooks/01_guardrails.ipynb
+./notebooks/02_llm_gateway_copy2.ipynb
+./notebooks/03_evals.ipynb
+./notebooks/02_llm_gateway.ipynb
