@@ -99,7 +99,9 @@ class Settings(BaseSettings):
             return "http://localhost:6333"
         return v
 
-    @field_validator("JUDGE_LLM_BASE_URL", "JUDGE_LLM_API_KEY", "JUDGE_LLM_MODEL", "JUDGE_OPENAI_API_KEY", mode="before")
+    @field_validator(
+        "JUDGE_LLM_BASE_URL", "JUDGE_LLM_API_KEY", "JUDGE_LLM_MODEL", "JUDGE_OPENAI_API_KEY", mode="before"
+    )
     @classmethod
     def _empty_judge_as_none(cls, v):
         return None if v == "" else v
